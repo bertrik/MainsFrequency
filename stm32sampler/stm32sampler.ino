@@ -5,15 +5,14 @@
 #include "cmdproc.h"
 #include "editline.h"
 
+#define PIN_50HZ_INPUT      PA0
+#define SAMPLE_FREQUENCY    10000
+
 static STM32ADC adc(ADC1);
 static char line[120];
 
-static uint8 pins = 0;
-
 static uint32_t value = 0;
-
-#define SAMPLE_FREQUENCY       10000
-
+static volatile uint32_t int_count = 0;
 
 static void show_help(const cmd_t * cmds)
 {
@@ -22,35 +21,27 @@ static void show_help(const cmd_t * cmds)
     }
 }
 
-static volatile uint32_t int_count = 0;
-
 static void adc_int(void)
 {
     int_count++;
     value = adc.getData();
 }
 
+static void adc_init(uint8_t pin, int sample_rate)
+{
+    adc.calibrate();
+    adc.setSampleRate(ADC_SMPR_1_5);
+
+    adc.setPins(&pin, 1);
+    adc.setTrigger(ADC_EXT_EV_TIM3_TRGO);
+    adc.attachInterrupt(adc_int, ADC_EOC);
+
+    Timer3.setPeriod(1000000 / sample_rate);
+    Timer3.setMasterModeTrGo(TIMER_CR2_MMS_UPDATE);
+}
+
 static int do_adc(int argc, char *argv[])
 {
-    if (argc > 1) {
-        char *cmd = argv[1];
-        if (strcmp(cmd, "timer") == 0) {
-            Timer3.setPeriod(1000000 / SAMPLE_FREQUENCY);
-            Timer3.setMasterModeTrGo(TIMER_CR2_MMS_UPDATE);
-        }
-        if (strcmp(cmd, "init") == 0) {
-            adc.calibrate();
-            adc.setSampleRate(ADC_SMPR_1_5);    // ?
-            adc.setPins(&pins, 1);
-            adc.setTrigger(ADC_EXT_EV_TIM3_TRGO);
-            adc.attachInterrupt(adc_int, ADC_EOC);
-            print("done\n");
-        }
-        if (strcmp(cmd, "start") == 0) {
-            print("start\n");
-            adc.startConversion();
-        }
-    }
     print("interrupts: %d\n", int_count);
     print("value: %d\n", value);
     return 0;
@@ -75,7 +66,8 @@ void setup(void)
     PrintInit();
     EditInit(line, sizeof(line));
 
-    pinMode(pins, INPUT_ANALOG);
+    pinMode(PIN_50HZ_INPUT, INPUT_ANALOG);
+    adc_init(PIN_50HZ_INPUT, SAMPLE_FREQUENCY);
 
     Serial.begin(115200);
     Serial.println("\nSTM32SAMPLER");
