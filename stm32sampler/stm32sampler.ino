@@ -14,6 +14,13 @@ static char line[120];
 static uint32_t value = 0;
 static volatile uint32_t int_count = 0;
 
+// sample buffer
+#define BUF_SIZE    2048
+static uint16_t buffer[BUF_SIZE];
+static volatile uint32_t bufr = 0;
+static volatile uint32_t bufw = 0;
+static volatile bool overflow = false;
+
 static void show_help(const cmd_t * cmds)
 {
     for (const cmd_t * cmd = cmds; cmd->cmd != NULL; cmd++) {
@@ -24,7 +31,13 @@ static void show_help(const cmd_t * cmds)
 static void adc_int(void)
 {
     int_count++;
-    value = adc.getData();
+    uint32_t next = (bufw + 1) % BUF_SIZE;
+    if (next != bufr) {
+        buffer[bufw] = adc.getData();
+        bufw = next;
+    } else {
+        overflow = true;
+    }
 }
 
 static void adc_init(uint8_t pin, int sample_rate)
@@ -47,11 +60,46 @@ static int do_adc(int argc, char *argv[])
     return 0;
 }
 
+static int compare_uint16(const void *v1, const void *v2)
+{
+    uint16_t u1 = *((uint16_t *) v1);
+    uint16_t u2 = *((uint16_t *) v2);
+    return u1 - u2;
+}
+
+static int do_stats(int argc, char *argv[])
+{
+    bufr = 0;
+    bufw = 0;
+    overflow = false;
+    uint32_t start = millis();
+    while (!overflow) {
+        // wait
+    }
+    print("done: %d, took: %d\n", overflow, millis() - start);
+
+    qsort(buffer, BUF_SIZE, sizeof(uint16_t), compare_uint16);
+    uint16_t q1 = buffer[BUF_SIZE / 4];
+    uint16_t med = buffer[BUF_SIZE / 2];
+    uint16_t q3 = buffer[3 * BUF_SIZE / 4];
+
+    print("q1=%u,med=%u,q3=%u\n", q1, med, q3);
+    return 0;
+}
+
+static int do_reboot(int argc, char *argv[])
+{
+    nvic_sys_reset();
+    return 0;
+}
+
 static int do_help(int argc, char *argv[]);
 
 const cmd_t commands[] = {
     { "help", do_help, "Show help" },
     { "adc", do_adc, "ADC functions" },
+    { "stats", do_stats, "Stats" },
+    { "reboot", do_reboot, "Reboot" },
     { NULL, NULL, NULL }
 };
 
@@ -100,4 +148,3 @@ void loop(void)
         print(">");
     }
 }
-
