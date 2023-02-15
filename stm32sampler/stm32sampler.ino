@@ -5,6 +5,8 @@
 #include "cmdproc.h"
 #include "editline.h"
 
+#include "statemachine.h"
+
 #define PIN_50HZ_INPUT      PA0
 #define SAMPLE_FREQUENCY    10000
 
@@ -87,6 +89,68 @@ static int do_stats(int argc, char *argv[])
     return 0;
 }
 
+static void sample_reset(void)
+{
+    bufr = 0;
+    bufw = 0;
+    overflow = false;
+}
+
+static bool sample_get(uint16_t * pval)
+{
+    if (bufr == bufw) {
+        return false;
+    }
+    int next = (bufr + 1) % BUF_SIZE;
+    *pval = buffer[bufr];
+    bufr = next;
+    return true;
+}
+
+static int do_freq(int argc, char *argv[])
+{
+    // take stats
+    sample_reset();
+    while (!overflow);
+    qsort(buffer, BUF_SIZE, sizeof(uint16_t), compare_uint16);
+    uint16_t q1 = buffer[BUF_SIZE / 4];
+    uint16_t med = buffer[BUF_SIZE / 2];
+    uint16_t q3 = buffer[3 * BUF_SIZE / 4];
+    print("stats: %u-%u-%u\n", q1, med, q3);
+
+    // determine zero crossings
+    sample_reset();
+    StateMachine sm = StateMachine(q1 - med, q3 - med);
+    int t = 0;
+    uint32_t start = millis();
+    double first = 0.0;
+    double last = 0.0;
+    int count = 0;
+    while ((millis() - start) < 1200) {
+        uint16_t val;
+        if (sample_get(&val)) {
+            double v = val - med;
+            if (sm.process(t / SAMPLE_FREQUENCY, v)) {
+                switch (count) {
+                case 0:
+                    first = sm.get_result();
+                    break;
+                case 50:
+                    last = sm.get_result();
+                    break;
+                default:
+                    break;
+                }
+                count++;
+            }
+            t++;
+        }
+    }
+    print("first: %f, last: %f\n", first, last);
+
+    return 0;
+}
+
 static int do_reboot(int argc, char *argv[])
 {
     nvic_sys_reset();
@@ -99,6 +163,7 @@ const cmd_t commands[] = {
     { "help", do_help, "Show help" },
     { "adc", do_adc, "ADC functions" },
     { "stats", do_stats, "Stats" },
+    { "freq", do_freq, "Measure frequency" },
     { "reboot", do_reboot, "Reboot" },
     { NULL, NULL, NULL }
 };
