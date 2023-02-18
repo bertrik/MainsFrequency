@@ -30,22 +30,31 @@ static void show_help(const cmd_t * cmds)
     }
 }
 
+static int tt = 0;
+
 static void adc_int(void)
 {
     int_count++;
     uint32_t next = (bufw + 1) % BUF_SIZE;
-    if (next != bufr) {
-        buffer[bufw] = adc.getData();
-        bufw = next;
-    } else {
-        overflow = true;
+    if (!overflow) {
+        if (next != bufr) {
+#if 1
+            buffer[bufw] = adc.getData();
+#else
+            buffer[bufw] = 1000 + 800 * cos(tt * 2.0 * 3.14159265358979 * 50 / SAMPLE_FREQUENCY);
+#endif
+            tt++;
+            bufw = next;
+        } else {
+            overflow = true;
+        }
     }
 }
 
 static void adc_init(uint8_t pin, int sample_rate)
 {
     adc.calibrate();
-    adc.setSampleRate(ADC_SMPR_1_5);
+    adc.setSampleRate(ADC_SMPR_13_5);
 
     adc.setPins(&pin, 1);
     adc.setTrigger(ADC_EXT_EV_TIM3_TRGO);
@@ -113,9 +122,9 @@ static int do_freq(int argc, char *argv[])
     sample_reset();
     while (!overflow);
     qsort(buffer, BUF_SIZE, sizeof(uint16_t), compare_uint16);
-    uint16_t q1 = buffer[BUF_SIZE / 4];
-    uint16_t med = buffer[BUF_SIZE / 2];
-    uint16_t q3 = buffer[3 * BUF_SIZE / 4];
+    uint16_t q1 = buffer[2 * BUF_SIZE / 8];
+    uint16_t med = buffer[4 * BUF_SIZE / 8];
+    uint16_t q3 = buffer[6 * BUF_SIZE / 8];
     print("stats: %u-%u-%u\n", q1, med, q3);
 
     // determine zero crossings
@@ -126,7 +135,8 @@ static int do_freq(int argc, char *argv[])
     double first = 0.0;
     double last = 0.0;
     int count = 0;
-    while ((millis() - start) < 1200) {
+    boolean done = false;
+    while (!done && ((millis() - start) < 3000)) {
         double value;
         if (sample_get(&value)) {
             double time = (double)t / SAMPLE_FREQUENCY;
@@ -137,6 +147,7 @@ static int do_freq(int argc, char *argv[])
                     break;
                 case 50:
                     last = sm.get_result();
+                    done = true;
                     break;
                 default:
                     break;
@@ -146,8 +157,8 @@ static int do_freq(int argc, char *argv[])
             t++;
         }
     }
-    double freq = 50 / (last - first);
-    print("frequency = %f\n", freq);
+    double freq = 50.0 / (last - first);
+    print("n=%d,first=%f,last=%f,frequency=%f\n", count, first, last, freq);
 
     return 0;
 }
@@ -164,7 +175,7 @@ const cmd_t commands[] = {
     { "help", do_help, "Show help" },
     { "adc", do_adc, "ADC functions" },
     { "stats", do_stats, "Stats" },
-    { "freq", do_freq, "Measure frequency" },
+    { "f", do_freq, "Measure frequency" },
     { "reboot", do_reboot, "Reboot" },
     { NULL, NULL, NULL }
 };
