@@ -96,7 +96,7 @@ static void sample_reset(void)
     overflow = false;
 }
 
-static bool sample_get(uint16_t * pval)
+static bool sample_get(double * pval)
 {
     if (bufr == bufw) {
         return false;
@@ -127,10 +127,10 @@ static int do_freq(int argc, char *argv[])
     double last = 0.0;
     int count = 0;
     while ((millis() - start) < 1200) {
-        uint16_t val;
-        if (sample_get(&val)) {
-            double v = val - med;
-            if (sm.process(t / SAMPLE_FREQUENCY, v)) {
+        double value;
+        if (sample_get(&value)) {
+            double time = (double)t / SAMPLE_FREQUENCY;
+            if (sm.process(time, value - med)) {
                 switch (count) {
                 case 0:
                     first = sm.get_result();
@@ -146,7 +146,8 @@ static int do_freq(int argc, char *argv[])
             t++;
         }
     }
-    print("first: %f, last: %f\n", first, last);
+    double freq = 50 / (last - first);
+    print("frequency = %f\n", freq);
 
     return 0;
 }

@@ -1,11 +1,11 @@
 class Regression {
 
   private:
-    int n;
     double sum_x;
     double sum_y;
     double sum_xx;
     double sum_xy;
+    int n;
 
     double a = 0.0;             // slope
     double b = 0.0;             // intercept on y-axis
