@@ -53,15 +53,15 @@ static void adc_int(void)
 
 static void adc_init(uint8_t pin, int sample_rate)
 {
+    Timer3.setPeriod(1000000 / sample_rate);
+    Timer3.setMasterModeTrGo(TIMER_CR2_MMS_UPDATE);
+
     adc.calibrate();
     adc.setSampleRate(ADC_SMPR_13_5);
-
     adc.setPins(&pin, 1);
     adc.setTrigger(ADC_EXT_EV_TIM3_TRGO);
     adc.attachInterrupt(adc_int, ADC_EOC);
-
-    Timer3.setPeriod(1000000 / sample_rate);
-    Timer3.setMasterModeTrGo(TIMER_CR2_MMS_UPDATE);
+    adc.startConversion();
 }
 
 static int do_adc(int argc, char *argv[])
