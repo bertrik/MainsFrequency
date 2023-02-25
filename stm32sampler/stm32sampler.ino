@@ -10,6 +10,8 @@
 #define PIN_50HZ_INPUT      PA0
 #define SAMPLE_FREQUENCY    10000
 
+#define STATS_SIZE          SAMPLE_FREQUENCY / 10
+
 static STM32ADC adc(ADC1);
 static char line[120];
 
@@ -19,6 +21,8 @@ static volatile uint32_t int_count = 0;
 // sample buffer
 #define BUF_SIZE    2048
 static uint16_t buffer[BUF_SIZE];
+static uint16_t stats[STATS_SIZE];
+
 static volatile uint32_t bufr = 0;
 static volatile uint32_t bufw = 0;
 static volatile bool overflow = false;
@@ -85,25 +89,7 @@ static void sample_reset(void)
     overflow = false;
 }
 
-static int do_stats(int argc, char *argv[])
-{
-    sample_reset();
-    uint32_t start = millis();
-    while (!overflow) {
-        // wait
-    }
-    print("done: %d, took: %d\n", overflow, millis() - start);
-
-    qsort(buffer, BUF_SIZE, sizeof(uint16_t), compare_uint16);
-    uint16_t q1 = buffer[BUF_SIZE / 4];
-    uint16_t med = buffer[BUF_SIZE / 2];
-    uint16_t q3 = buffer[3 * BUF_SIZE / 4];
-
-    print("q1=%u,med=%u,q3=%u\n", q1, med, q3);
-    return 0;
-}
-
-static bool sample_get(double * pval)
+static bool sample_get(uint16_t * pval)
 {
     if (bufr == bufw) {
         return false;
@@ -114,15 +100,36 @@ static bool sample_get(double * pval)
     return true;
 }
 
+static void stats_calculate(uint16_t * q1, uint16_t * q2, uint16_t * q3)
+{
+    sample_reset();
+    int index = 0;
+    while (index < STATS_SIZE) {
+        uint16_t value;
+        if (sample_get(&value)) {
+            stats[index++] = value;
+        }
+    }
+    qsort(stats, STATS_SIZE, sizeof(uint16_t), compare_uint16);
+    *q1 = stats[1 * STATS_SIZE / 4];
+    *q2 = stats[2 * STATS_SIZE / 4];
+    *q3 = stats[3 * STATS_SIZE / 4];
+}
+
+static int do_stats(int argc, char *argv[])
+{
+    uint16_t q1, q2, q3;
+    stats_calculate(&q1, &q2, &q3);
+    print("q1=%u,q2=%u,q3=%u\n", q1, q2, q3);
+    return 0;
+}
+
 static int do_freq(int argc, char *argv[])
 {
     // take stats
-    sample_reset();
-    while (!overflow);
-    qsort(buffer, BUF_SIZE, sizeof(uint16_t), compare_uint16);
-    uint16_t q1 = buffer[2 * BUF_SIZE / 8];
-    uint16_t med = buffer[4 * BUF_SIZE / 8];
-    uint16_t q3 = buffer[6 * BUF_SIZE / 8];
+    uint16_t q1, med, q3;
+    stats_calculate(&q1, &med, &q3);
+
     print("stats: %u-%u-%u\n", q1, med, q3);
 
     // determine zero crossings
@@ -135,10 +142,11 @@ static int do_freq(int argc, char *argv[])
     int count = 0;
     bool done = false;
     while (!done && ((millis() - start) < 3000)) {
-        double value;
+        uint16_t value;
         if (sample_get(&value)) {
-            double time = (double)t / SAMPLE_FREQUENCY;
-            if (sm.process(time, value - med)) {
+            double v = value - med;
+            double time = (double) t / SAMPLE_FREQUENCY;
+            if (sm.process(time, v)) {
                 switch (count) {
                 case 0:
                     first = sm.get_result();
