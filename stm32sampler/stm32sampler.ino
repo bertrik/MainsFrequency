@@ -42,8 +42,8 @@ static void adc_int(void)
             buffer[bufw] = adc.getData();
 #else
             buffer[bufw] = 1000 + 800 * cos(tt * 2.0 * 3.14159265358979 * 50 / SAMPLE_FREQUENCY);
-#endif
             tt++;
+#endif
             bufw = next;
         } else {
             overflow = true;
@@ -78,11 +78,16 @@ static int compare_uint16(const void *v1, const void *v2)
     return u1 - u2;
 }
 
-static int do_stats(int argc, char *argv[])
+static void sample_reset(void)
 {
     bufr = 0;
     bufw = 0;
     overflow = false;
+}
+
+static int do_stats(int argc, char *argv[])
+{
+    sample_reset();
     uint32_t start = millis();
     while (!overflow) {
         // wait
@@ -96,13 +101,6 @@ static int do_stats(int argc, char *argv[])
 
     print("q1=%u,med=%u,q3=%u\n", q1, med, q3);
     return 0;
-}
-
-static void sample_reset(void)
-{
-    bufr = 0;
-    bufw = 0;
-    overflow = false;
 }
 
 static bool sample_get(double * pval)
@@ -129,13 +127,13 @@ static int do_freq(int argc, char *argv[])
 
     // determine zero crossings
     sample_reset();
-    StateMachine sm = StateMachine(q1 - med, q3 - med);
+    StateMachine sm(q1 - med, q3 - med);
     int t = 0;
     uint32_t start = millis();
     double first = 0.0;
     double last = 0.0;
     int count = 0;
-    boolean done = false;
+    bool done = false;
     while (!done && ((millis() - start) < 3000)) {
         double value;
         if (sample_get(&value)) {
