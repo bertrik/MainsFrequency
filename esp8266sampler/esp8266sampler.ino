@@ -23,16 +23,18 @@ static volatile uint32_t int_count = 0;
 
 static void IRAM_ATTR timer_isr(void)
 {
-    int_count++;
+    uint16_t value = analogRead(PIN_50HZ_INPUT);
+
     uint32_t next = (bufw + 1) % BUF_SIZE;
     if (!overflow) {
         if (next != bufr) {
-            buffer[bufw] = analogRead(PIN_50HZ_INPUT);
+            buffer[bufw] = value;
             bufw = next;
         } else {
             overflow = true;
         }
     }
+    int_count++;
 }
 
 static void timer_init(void)
