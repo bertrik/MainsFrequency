@@ -3,6 +3,8 @@
 #include "editline.h"
 #include "cmdproc.h"
 
+#include "statemachine.h"
+
 #define PIN_50HZ_INPUT      A0
 #define SAMPLE_FREQUENCY    5000
 #define STATS_SIZE          SAMPLE_FREQUENCY / 10
@@ -95,6 +97,51 @@ static void show_help(const cmd_t * cmds)
     }
 }
 
+static int do_freq(int argc, char *argv[])
+{
+    // take stats
+    uint16_t q1, med, q3;
+    stats_calculate(&q1, &med, &q3);
+
+    printf("stats: %u-%u-%u\n", q1, med, q3);
+
+    // determine zero crossings
+    sample_reset();
+    StateMachine sm(q1 - med, q3 - med);
+    int t = 0;
+    uint32_t start = millis();
+    double first = 0.0;
+    double last = 0.0;
+    int count = 0;
+    bool done = false;
+    while (!done && ((millis() - start) < 3000)) {
+        uint16_t value;
+        if (sample_get(&value)) {
+            double v = value - med;
+            double time = (double) t / SAMPLE_FREQUENCY;
+            if (sm.process(time, v)) {
+                switch (count) {
+                case 0:
+                    first = sm.get_result();
+                    break;
+                case 50:
+                    last = sm.get_result();
+                    done = true;
+                    break;
+                default:
+                    break;
+                }
+                count++;
+            }
+            t++;
+        }
+    }
+    double freq = 50.0 / (last - first);
+    printf("n=%d,first=%f,last=%f,frequency=%f\n", count, first, last, freq);
+
+    return 0;
+}
+
 static int do_stats(int argc, char *argv[])
 {
     uint16_t q1, q2, q3;
@@ -115,6 +162,7 @@ const cmd_t commands[] = {
     { "help", do_help, "Show help" },
     { "stats", do_stats, "Stats" },
     { "adc", do_adc, "ADC" },
+    { "f", do_freq, "Measure frequency" },
     { NULL, NULL, NULL }
 };
 
