@@ -114,7 +114,7 @@ static int do_freq(int argc, char *argv[])
     double last = 0.0;
     int count = 0;
     bool done = false;
-    while (!done && ((millis() - start) < 3000)) {
+    while (!done && ((millis() - start) < 1500)) {
         uint16_t value;
         if (sample_get(&value)) {
             double v = value - med;
