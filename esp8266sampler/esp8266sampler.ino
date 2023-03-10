@@ -1,78 +1,52 @@
 #include <Arduino.h>
-#include <STM32ADC.h>
 
-#include "print.h"
-#include "cmdproc.h"
 #include "editline.h"
+#include "cmdproc.h"
 
 #include "statemachine.h"
 
-#define PIN_50HZ_INPUT      PA0
-#define SAMPLE_FREQUENCY    10000
-
+#define PIN_50HZ_INPUT      A0
+#define SAMPLE_FREQUENCY    5000
 #define STATS_SIZE          SAMPLE_FREQUENCY / 10
 
-static STM32ADC adc(ADC1);
-static char line[120];
+#define printf Serial.printf
 
-static uint32_t value = 0;
-static volatile uint32_t int_count = 0;
+// editor
+static char line[120];
 
 // sample buffer
 #define BUF_SIZE    2048
 static uint16_t buffer[BUF_SIZE];
 static uint16_t stats[STATS_SIZE];
-
 static volatile uint32_t bufr = 0;
 static volatile uint32_t bufw = 0;
 static volatile bool overflow = false;
+static volatile uint32_t int_count = 0;
 
-static void show_help(const cmd_t * cmds)
+static void IRAM_ATTR timer_isr(void)
 {
-    for (const cmd_t * cmd = cmds; cmd->cmd != NULL; cmd++) {
-        print("%10s: %s\n", cmd->name, cmd->help);
-    }
-}
+    uint16_t value = analogRead(PIN_50HZ_INPUT);
 
-static int tt = 0;
-
-static void adc_int(void)
-{
-    int_count++;
     uint32_t next = (bufw + 1) % BUF_SIZE;
     if (!overflow) {
         if (next != bufr) {
-#if 1
-            buffer[bufw] = adc.getData();
-#else
-            buffer[bufw] = 1000 + 800 * cos(tt * 2.0 * 3.14159265358979 * 50 / SAMPLE_FREQUENCY);
-            tt++;
-#endif
+            buffer[bufw] = value;
             bufw = next;
         } else {
             overflow = true;
         }
     }
+    int_count++;
 }
 
-static void adc_init(uint8_t pin, int sample_rate)
+static void timer_init(void)
 {
-    Timer3.setPeriod(1000000 / sample_rate);
-    Timer3.setMasterModeTrGo(TIMER_CR2_MMS_UPDATE);
-
-    adc.calibrate();
-    adc.setSampleRate(ADC_SMPR_13_5);
-    adc.setPins(&pin, 1);
-    adc.setTrigger(ADC_EXT_EV_TIM3_TRGO);
-    adc.attachInterrupt(adc_int, ADC_EOC);
-    adc.startConversion();
-}
-
-static int do_adc(int argc, char *argv[])
-{
-    print("interrupts: %d\n", int_count);
-    print("value: %d\n", value);
-    return 0;
+    // set up timer interrupt
+    timer1_disable();
+    timer1_isr_init();
+    timer1_attachInterrupt(timer_isr);
+    timer1_write(5000000 / SAMPLE_FREQUENCY);
+    timer1_enable(TIM_DIV16, TIM_EDGE, TIM_LOOP);
 }
 
 static int compare_uint16(const void *v1, const void *v2)
@@ -116,12 +90,11 @@ static void stats_calculate(uint16_t * q1, uint16_t * q2, uint16_t * q3)
     *q3 = stats[3 * STATS_SIZE / 4];
 }
 
-static int do_stats(int argc, char *argv[])
+static void show_help(const cmd_t * cmds)
 {
-    uint16_t q1, q2, q3;
-    stats_calculate(&q1, &q2, &q3);
-    print("q1=%u,q2=%u,q3=%u\n", q1, q2, q3);
-    return 0;
+    for (const cmd_t * cmd = cmds; cmd->cmd != NULL; cmd++) {
+        printf("%10s: %s\n", cmd->name, cmd->help);
+    }
 }
 
 static int do_freq(int argc, char *argv[])
@@ -130,7 +103,7 @@ static int do_freq(int argc, char *argv[])
     uint16_t q1, med, q3;
     stats_calculate(&q1, &med, &q3);
 
-    print("stats: %u-%u-%u\n", q1, med, q3);
+    printf("stats: %u-%u-%u\n", q1, med, q3);
 
     // determine zero crossings
     sample_reset();
@@ -141,7 +114,7 @@ static int do_freq(int argc, char *argv[])
     double last = 0.0;
     int count = 0;
     bool done = false;
-    while (!done && ((millis() - start) < 3000)) {
+    while (!done && ((millis() - start) < 1500)) {
         uint16_t value;
         if (sample_get(&value)) {
             double v = value - med;
@@ -164,14 +137,22 @@ static int do_freq(int argc, char *argv[])
         }
     }
     double freq = 50.0 / (last - first);
-    print("n=%d,first=%f,last=%f,frequency=%f\n", count, first, last, freq);
+    printf("n=%d,first=%f,last=%f,frequency=%f\n", count, first, last, freq);
 
     return 0;
 }
 
-static int do_reboot(int argc, char *argv[])
+static int do_stats(int argc, char *argv[])
 {
-    nvic_sys_reset();
+    uint16_t q1, q2, q3;
+    stats_calculate(&q1, &q2, &q3);
+    printf("q1=%u,q2=%u,q3=%u\n", q1, q2, q3);
+    return 0;
+}
+
+static int do_adc(int argc, char *argv[])
+{
+    printf("interrupts: %d\n", int_count);
     return 0;
 }
 
@@ -179,10 +160,9 @@ static int do_help(int argc, char *argv[]);
 
 const cmd_t commands[] = {
     { "help", do_help, "Show help" },
-    { "adc", do_adc, "ADC functions" },
     { "stats", do_stats, "Stats" },
+    { "adc", do_adc, "ADC" },
     { "f", do_freq, "Measure frequency" },
-    { "reboot", do_reboot, "Reboot" },
     { NULL, NULL, NULL }
 };
 
@@ -194,14 +174,11 @@ static int do_help(int argc, char *argv[])
 
 void setup(void)
 {
-    PrintInit();
+    Serial.begin(115200);
+    Serial.println("\nESP8266 SAMPLER");
     EditInit(line, sizeof(line));
 
-    pinMode(PIN_50HZ_INPUT, INPUT_ANALOG);
-    adc_init(PIN_50HZ_INPUT, SAMPLE_FREQUENCY);
-
-    Serial.begin(115200);
-    Serial.println("\nSTM32SAMPLER");
+    timer_init();
 }
 
 void loop(void)
@@ -216,18 +193,18 @@ void loop(void)
         int result = cmd_process(commands, line);
         switch (result) {
         case CMD_OK:
-            print("OK\n");
+            printf("OK\n");
             break;
         case CMD_NO_CMD:
             break;
         case CMD_UNKNOWN:
-            print("Unknown command, available commands:\n");
+            printf("Unknown command, available commands:\n");
             show_help(commands);
             break;
         default:
-            print("%d\n", result);
+            printf("%d\n", result);
             break;
         }
-        print(">");
+        printf(">");
     }
 }
