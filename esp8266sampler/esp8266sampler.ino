@@ -31,7 +31,6 @@ static uint16_t stats[STATS_SIZE];
 static volatile uint32_t bufr = 0;
 static volatile uint32_t bufw = 0;
 static volatile bool overflow = false;
-static volatile uint32_t int_count = 0;
 
 // wifi / mqtt
 static WiFiClient wifiClient;
@@ -50,7 +49,6 @@ static void IRAM_ATTR timer_isr(void)
             overflow = true;
         }
     }
-    int_count++;
 }
 
 static void sample_init(int frequency)
@@ -206,18 +204,11 @@ static int do_stats(int argc, char *argv[])
     return 0;
 }
 
-static int do_adc(int argc, char *argv[])
-{
-    printf("interrupts: %d\n", int_count);
-    return 0;
-}
-
 static int do_help(int argc, char *argv[]);
 
 const cmd_t commands[] = {
     { "help", do_help, "Show help" },
     { "stats", do_stats, "Stats" },
-    { "adc", do_adc, "ADC" },
     { "f", do_freq, "Measure frequency" },
     { NULL, NULL, NULL }
 };
