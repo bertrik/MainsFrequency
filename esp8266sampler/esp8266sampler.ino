@@ -199,7 +199,13 @@ static int do_freq(int argc, char *argv[])
 static int do_stats(int argc, char *argv[])
 {
     uint16_t q1, q2, q3;
+    WiFiState state;
+    WiFi.shutdown(state);
+    sample_start();
     stats_calculate(&q1, &q2, &q3);
+    sample_stop();
+    WiFi.resumeFromShutdown(state);
+
     printf("q1=%u,q2=%u,q3=%u\n", q1, q2, q3);
     return 0;
 }
