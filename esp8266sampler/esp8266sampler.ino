@@ -64,12 +64,14 @@ static void sample_init(int frequency)
 
 static void sample_start(void)
 {
+    digitalWrite(LED_BUILTIN, 0);
     timer1_enable(TIM_DIV16, TIM_EDGE, TIM_LOOP);
 }
 
 static void sample_stop(void)
 {
     timer1_disable();
+    digitalWrite(LED_BUILTIN, 1);
 }
 
 static void sample_reset(void)
@@ -231,6 +233,9 @@ static int do_help(int argc, char *argv[])
 
 void setup(void)
 {
+    pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, 1);
+
     Serial.begin(115200);
     Serial.println("\nESP8266 SAMPLER");
     EditInit(line, sizeof(line));
