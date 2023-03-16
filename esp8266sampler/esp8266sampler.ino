@@ -157,21 +157,20 @@ static bool measure_frequency(double *frequency)
     int t = 0;
     uint32_t start = millis();
     double first = 0.0;
-    double last = 0.0;
     int count = 0;
     bool done = false;
     while (!done && ((millis() - start) < 1500)) {
         uint16_t value;
         if (sample_get(&value)) {
             double v = value - med;
-            double time = (double) t / SAMPLE_FREQUENCY;
+            double time = (double) t++ / SAMPLE_FREQUENCY;
             if (sm.process(time, v)) {
                 switch (count) {
                 case 0:
                     first = sm.get_result();
                     break;
                 case 50:
-                    last = sm.get_result();
+                    *frequency = count / (sm.get_result() - first);
                     done = true;
                     break;
                 default:
@@ -179,16 +178,14 @@ static bool measure_frequency(double *frequency)
                 }
                 count++;
             }
-            t++;
         }
     }
-    *frequency = 50.0 / (last - first);
 
     // WiFi resume
     sample_stop();
     WiFi.resumeFromShutdown(state);
 
-    return true;
+    return done;
 }
 
 static int do_freq(int argc, char *argv[])
