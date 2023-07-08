@@ -133,10 +133,11 @@ void loop(void)
         sum_i += value * cos(2.0 * M_PI * 50 * index / SAMPLE_FREQUENCY);
         sum_q += value * sin(2.0 * M_PI * 50 * index / SAMPLE_FREQUENCY);
         index++;
-        if (index >= 5000) {
+        if (index >= SAMPLE_FREQUENCY) {
             digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
 
             double angle = 180.0 * atan2(sum_i, sum_q) / M_PI;
+            double ampl = sqrt(sum_i * sum_i + sum_q * sum_q) / SAMPLE_FREQUENCY;
             sum_q = 0.0;
             sum_i = 0.0;
             index = 0;
@@ -149,7 +150,7 @@ void loop(void)
             double t = 1.0 - 0.02 * (d / 360.0);
             double freq = 50.0 / t;
             prev_angle = angle;
-            print("Angle:%9.3f, dAngle:%8.3f, Freq:%7.3f\n", angle, d, freq);
+            print("Angle:%8.3f, dAngle:%7.3f, Freq:%7.3f, Ampl:%5.1f\n", angle, d, freq, ampl);
         }
     }
     // command line processing
