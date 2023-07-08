@@ -1,0 +1,169 @@
+#include "print.h"
+#include "cmdproc.h"
+#include "editline.h"
+
+#define PIN_50HZ_INPUT      0
+#define PIN_LED             12
+#define SAMPLE_FREQUENCY    5000
+
+static hw_timer_t *timer = nullptr;
+
+static char line[120];
+
+static volatile uint32_t int_count = 0;
+
+// sample buffer
+#define BUF_SIZE    2048
+static uint16_t buffer[BUF_SIZE];
+static volatile uint32_t bufr = 0;
+static volatile uint32_t bufw = 0;
+static volatile bool overflow = false;
+static volatile uint16_t latest_reading = 0;
+
+static void show_help(const cmd_t * cmds)
+{
+    for (const cmd_t * cmd = cmds; cmd->cmd != NULL; cmd++) {
+        print("%10s: %s\r\n", cmd->name, cmd->help);
+    }
+}
+
+void IRAM_ATTR adc_int()
+{
+    latest_reading = analogRead(PIN_50HZ_INPUT);
+    uint32_t next = (bufw + 1) % BUF_SIZE;
+    if (next != bufr) {
+        latest_reading = buffer[bufw] = latest_reading;
+        bufw = next;
+    }
+    int_count++;
+}
+
+static void adc_init()
+{
+    analogReadResolution(12);
+    analogSetAttenuation(ADC_0db);
+    analogSetPinAttenuation(PIN_50HZ_INPUT, ADC_0db);
+    adcAttachPin(PIN_50HZ_INPUT);
+
+    timer = timerBegin(0, 80, true);
+    timerAttachInterrupt(timer, &adc_int, true);
+    timerAlarmWrite(timer, 1000000 / SAMPLE_FREQUENCY, true);  // 5kHz timer
+    timerAlarmEnable(timer);
+}
+
+static int do_adc(int argc, char *argv[])
+{
+    print("interrupts: %d\r\n", int_count);
+    print("latest reading: %d\r\n", latest_reading);
+    return 0;
+}
+
+static int compare_uint16(const void *v1, const void *v2)
+{
+    uint16_t u1 = *((uint16_t *) v1);
+    uint16_t u2 = *((uint16_t *) v2);
+    return u1 - u2;
+}
+
+static void sample_reset(void)
+{
+    bufr = 0;
+    bufw = 0;
+    overflow = false;
+}
+
+static bool sample_get(uint16_t * pval)
+{
+    if (bufr == bufw) {
+        return false;
+    }
+    int next = (bufr + 1) % BUF_SIZE;
+    *pval = buffer[bufr];
+    bufr = next;
+    return true;
+}
+
+static int do_help(int argc, char *argv[]);
+
+const cmd_t commands[] = {
+    { "help", do_help, "Show help" },
+    { "a", do_adc, "ADC functions" },
+    { NULL, NULL, NULL }
+};
+
+static int do_help(int argc, char *argv[])
+{
+    show_help(commands);
+    return CMD_OK;
+}
+
+void setup(void)
+{
+    PrintInit();
+    EditInit(line, sizeof(line));
+
+    pinMode(PIN_LED, OUTPUT);
+    adc_init();
+
+    Serial.begin(115200);
+    Serial.println("\nESP32PHASE");
+}
+
+void loop(void)
+{
+    // run the frequency algorithm continuously
+    static double sum_i = 0.0;
+    static double sum_q = 0.0;
+    static int index = 0;
+    uint16_t value;
+    static double prev_angle = 0.0;
+    if (sample_get(&value)) {
+        sum_i += value * cos(2.0 * M_PI * 50 * index / SAMPLE_FREQUENCY);
+        sum_q += value * sin(2.0 * M_PI * 50 * index / SAMPLE_FREQUENCY);
+        index++;
+        if (index >= SAMPLE_FREQUENCY) {
+            digitalWrite(PIN_LED, !digitalRead(PIN_LED));
+
+            double angle = 180.0 * atan2(sum_i, sum_q) / M_PI;
+            double ampl = sqrt(sum_i * sum_i + sum_q * sum_q) / SAMPLE_FREQUENCY;
+            sum_q = 0.0;
+            sum_i = 0.0;
+            index = 0;
+            double d = angle - prev_angle;
+            if (d < -180.0) {
+                d += 360.0;
+            } else if (d > 180.0) {
+                d -= 360.0;
+            }
+            double t = 1.0 - 0.02 * (d / 360.0);
+            double freq = 50.0 / t;
+            prev_angle = angle;
+            print("Angle:%8.3f, dAngle:%7.3f, Freq:%7.3f, Ampl:%5.1f\n", angle, d, freq, ampl);
+        }
+    }
+    // command line processing
+    bool haveLine = false;
+    if (Serial.available()) {
+        char c;
+        haveLine = EditLine(Serial.read(), &c);
+        Serial.print(c);
+    }
+    if (haveLine) {
+        int result = cmd_process(commands, line);
+        switch (result) {
+        case CMD_OK:
+            print("OK\r\n");
+            break;
+        case CMD_NO_CMD:
+            break;
+        case CMD_UNKNOWN:
+            print("Unknown command, available commands:\r\n");
+            show_help(commands);
+            break;
+        default:
+            print("%d\r\n", result);
+            break;
+        }
+        print(">");
+    }
+}
