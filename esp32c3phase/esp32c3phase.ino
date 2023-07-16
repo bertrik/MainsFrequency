@@ -2,13 +2,23 @@
 #include "cmdproc.h"
 #include "editline.h"
 
+#include <WiFiManager.h>
+#include <PubSubClient.h>
+
+#define BASE_FREQUENCY  50.0
+
 #define PIN_50HZ_INPUT      0
 #define PIN_LED             12
 #define SAMPLE_FREQUENCY    5000
 
+#define MQTT_HOST   "stofradar.nl"
+#define MQTT_PORT   1883
+#define MQTT_TOPIC  "bertrik/mains"
+
 static hw_timer_t *timer = nullptr;
 
 static char line[120];
+static char esp_id[] = "esp32-50hz";
 
 static volatile uint32_t int_count = 0;
 
@@ -20,6 +30,9 @@ static volatile uint32_t bufw = 0;
 static volatile bool overflow = false;
 static volatile uint16_t latest_reading = 0;
 
+static WiFiClient wifiClient;
+static PubSubClient mqttClient(wifiClient);
+
 static void show_help(const cmd_t * cmds)
 {
     for (const cmd_t * cmd = cmds; cmd->cmd != NULL; cmd++) {
@@ -27,7 +40,7 @@ static void show_help(const cmd_t * cmds)
     }
 }
 
-void IRAM_ATTR adc_int()
+static void IRAM_ATTR adc_int()
 {
     latest_reading = analogRead(PIN_50HZ_INPUT);
     uint32_t next = (bufw + 1) % BUF_SIZE;
@@ -47,7 +60,7 @@ static void adc_init()
 
     timer = timerBegin(0, 80, true);
     timerAttachInterrupt(timer, &adc_int, true);
-    timerAlarmWrite(timer, 1000000 / SAMPLE_FREQUENCY, true);  // 5kHz timer
+    timerAlarmWrite(timer, 1000000 / SAMPLE_FREQUENCY, true);   // 5kHz timer
     timerAlarmEnable(timer);
 }
 
@@ -97,6 +110,27 @@ static int do_help(int argc, char *argv[])
     return CMD_OK;
 }
 
+static bool mqtt_send(const char *topic, const char *value, bool retained)
+{
+    bool result = false;
+    if (!mqttClient.connected()) {
+        Serial.print("Connecting MQTT...");
+        mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+        result = mqttClient.connect(esp_id, topic, 0, retained, "offline");
+        Serial.println(result ? "OK" : "FAIL");
+    }
+    if (mqttClient.connected()) {
+        Serial.print("Publishing ");
+        Serial.print(value);
+        Serial.print(" to ");
+        Serial.print(topic);
+        Serial.print("...");
+        result = mqttClient.publish(topic, value, retained);
+        Serial.println(result ? "OK" : "FAIL");
+    }
+    return result;
+}
+
 void setup(void)
 {
     PrintInit();
@@ -107,6 +141,9 @@ void setup(void)
 
     Serial.begin(115200);
     Serial.println("\nESP32PHASE");
+
+    WiFiManager wm;
+    wm.autoConnect("AutoConnectAP");
 }
 
 void loop(void)
@@ -118,8 +155,8 @@ void loop(void)
     uint16_t value;
     static double prev_angle = 0.0;
     if (sample_get(&value)) {
-        sum_i += value * cos(2.0 * M_PI * 50 * index / SAMPLE_FREQUENCY);
-        sum_q += value * sin(2.0 * M_PI * 50 * index / SAMPLE_FREQUENCY);
+        sum_i += value * cos(2.0 * M_PI * BASE_FREQUENCY * index / SAMPLE_FREQUENCY);
+        sum_q += value * sin(2.0 * M_PI * BASE_FREQUENCY * index / SAMPLE_FREQUENCY);
         index++;
         if (index >= SAMPLE_FREQUENCY) {
             digitalWrite(PIN_LED, !digitalRead(PIN_LED));
@@ -135,10 +172,15 @@ void loop(void)
             } else if (d > 180.0) {
                 d -= 360.0;
             }
-            double t = 1.0 - 0.02 * (d / 360.0);
-            double freq = 50.0 / t;
+            double t = 1.0 - (d / 360.0) / BASE_FREQUENCY;
+            double freq = BASE_FREQUENCY / t;
             prev_angle = angle;
             print("Angle:%8.3f, dAngle:%7.3f, Freq:%7.3f, Ampl:%5.1f\n", angle, d, freq, ampl);
+
+            char value[64];
+            sprintf(value, "{\"frequency\":%.3f,\"phase\":%.3f,\"amplitude\":%.1f}", freq, angle,
+                    ampl);
+            mqtt_send(MQTT_TOPIC, value, false);
         }
     }
     // command line processing
