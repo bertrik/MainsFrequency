@@ -11,9 +11,9 @@
 #define PIN_LED             12
 #define SAMPLE_FREQUENCY    5000
 
-#define MQTT_HOST   "stofradar.nl"
+#define MQTT_HOST   "mosquitto.space.revspace.nl"
 #define MQTT_PORT   1883
-#define MQTT_TOPIC  "bertrik/mains"
+#define MQTT_TOPIC  "revspace/sensors/ac/frequency"
 
 static hw_timer_t *timer = nullptr;
 
@@ -32,6 +32,31 @@ static volatile uint16_t latest_reading = 0;
 
 static WiFiClient wifiClient;
 static PubSubClient mqttClient(wifiClient);
+
+#define MEDIAN_SIZE 5
+static double median_buf[MEDIAN_SIZE];
+static int median_idx = 0;
+
+static int compare_double(const void *pv1, const void *pv2)
+{
+    double d1 = *(double *)pv1;
+    double d2 = *(double *)pv2;
+    return (d1 < d2) ? -1 : (d1 > d2) ? 1 : 0;
+}
+
+static bool median_add(double val, double *median)
+{
+    if (median_idx < MEDIAN_SIZE) {
+        median_buf[median_idx++] = val;
+    }
+    if (median_idx >= MEDIAN_SIZE) {
+        qsort(median_buf, MEDIAN_SIZE, sizeof(double), compare_double);
+        *median = median_buf[MEDIAN_SIZE / 2];
+        median_idx = 0;
+        return true;
+    }
+    return false;
+}
 
 static void show_help(const cmd_t * cmds)
 {
@@ -177,10 +202,13 @@ void loop(void)
             prev_angle = angle;
             print("Angle:%8.3f, dAngle:%7.3f, Freq:%7.3f, Ampl:%5.1f\n", angle, d, freq, ampl);
 
-            char value[64];
-            sprintf(value, "{\"frequency\":%.3f,\"phase\":%.3f,\"amplitude\":%.1f}", freq, angle,
-                    ampl);
-            mqtt_send(MQTT_TOPIC, value, false);
+            // calculate median and send over mqtt
+            double median;
+            if (median_add(freq, &median)) {
+                char value[64];
+                sprintf(value, "%.3f Hz", median);
+                mqtt_send(MQTT_TOPIC, value, true);
+            }
         }
     }
     // command line processing
