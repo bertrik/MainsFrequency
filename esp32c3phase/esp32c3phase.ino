@@ -1,9 +1,11 @@
-#include "print.h"
-#include "cmdproc.h"
-#include "editline.h"
-
 #include <WiFiManager.h>
 #include <PubSubClient.h>
+#include <MiniShell.h>
+
+#define printf Serial.printf
+
+// whether we publish over WiFi or not
+//#define WIFI_ENABLED
 
 #define BASE_FREQUENCY  50.0
 
@@ -30,13 +32,14 @@ static volatile uint32_t bufw = 0;
 static volatile bool overflow = false;
 static volatile uint16_t latest_reading = 0;
 
+static MiniShell shell(&Serial);
 static WiFiClient wifiClient;
 static PubSubClient mqttClient(wifiClient);
 
 static void show_help(const cmd_t * cmds)
 {
     for (const cmd_t * cmd = cmds; cmd->cmd != NULL; cmd++) {
-        print("%10s: %s\r\n", cmd->name, cmd->help);
+        printf("%10s: %s\r\n", cmd->name, cmd->help);
     }
 }
 
@@ -66,8 +69,8 @@ static void adc_init()
 
 static int do_adc(int argc, char *argv[])
 {
-    print("interrupts: %d\r\n", int_count);
-    print("latest reading: %d\r\n", latest_reading);
+    printf("interrupts: %d\r\n", int_count);
+    printf("latest reading: %d\r\n", latest_reading);
     return 0;
 }
 
@@ -107,7 +110,7 @@ const cmd_t commands[] = {
 static int do_help(int argc, char *argv[])
 {
     show_help(commands);
-    return CMD_OK;
+    return 0;
 }
 
 static bool mqtt_send(const char *topic, const char *value, bool retained)
@@ -133,17 +136,15 @@ static bool mqtt_send(const char *topic, const char *value, bool retained)
 
 void setup(void)
 {
-    PrintInit();
-    EditInit(line, sizeof(line));
-
     pinMode(PIN_LED, OUTPUT);
     adc_init();
 
     Serial.begin(115200);
     Serial.println("\nESP32PHASE");
-
+#ifdef WIFI_ENABLED
     WiFiManager wm;
     wm.autoConnect("AutoConnectAP");
+#endif
 }
 
 void loop(void)
@@ -175,37 +176,25 @@ void loop(void)
             double t = 1.0 - (d / 360.0) / BASE_FREQUENCY;
             double freq = BASE_FREQUENCY / t;
             prev_angle = angle;
-            print("Angle:%8.3f, dAngle:%7.3f, Freq:%7.3f, Ampl:%5.1f\n", angle, d, freq, ampl);
 
+            printf("Angle:%8.3f, dAngle:%7.3f, Freq:%7.3f, Ampl:%5.1f\n", angle, d, freq, ampl);
+
+#ifdef WIFI_ENABLED
             char value[64];
             sprintf(value, "{\"frequency\":%.3f,\"phase\":%.3f,\"amplitude\":%.1f}", freq, angle,
                     ampl);
             mqtt_send(MQTT_TOPIC, value, false);
+            // calculate median and send over mqtt
+            double median;
+            if (median_add(freq, &median)) {
+                char value[64];
+                sprintf(value, "%.3f Hz", median);
+                mqtt_send(MQTT_TOPIC, value, true);
+            }
+#endif
         }
     }
     // command line processing
-    bool haveLine = false;
-    if (Serial.available()) {
-        char c;
-        haveLine = EditLine(Serial.read(), &c);
-        Serial.print(c);
-    }
-    if (haveLine) {
-        int result = cmd_process(commands, line);
-        switch (result) {
-        case CMD_OK:
-            print("OK\r\n");
-            break;
-        case CMD_NO_CMD:
-            break;
-        case CMD_UNKNOWN:
-            print("Unknown command, available commands:\r\n");
-            show_help(commands);
-            break;
-        default:
-            print("%d\r\n", result);
-            break;
-        }
-        print(">");
-    }
+    shell.process(">", commands);
 }
+
